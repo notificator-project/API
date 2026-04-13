@@ -1,6 +1,6 @@
 # Notificator Project Public API
 
-This directory contains the Notificator Project Public Notify API.
+This repository contains the Notificator Project Public Notify API.
 
 It is intended for teams that want to deploy the public notification ingestion endpoint independently.
 
