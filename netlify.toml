@@ -1,0 +1,12 @@
+[build]
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/"
+  to = "/.netlify/functions/public-notify"
+  status = 200
+
+[[redirects]]
+  from = "/openapi"
+  to = "/.netlify/functions/public-notify?format=openapi"
+  status = 200

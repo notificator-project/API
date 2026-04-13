@@ -1,0 +1,23 @@
+{
+  "name": "notificator-project-public-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+	"description": "Notificator Project Public API",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "netlify dev",
+    "deploy": "netlify deploy --prod"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "mqtt": "^5.10.3",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1"
+  },
+  "devDependencies": {
+    "netlify-cli": "^23.0.0"
+  }
+}
