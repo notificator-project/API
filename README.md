@@ -81,5 +81,5 @@ Recommended pages:
 
 ## Contributors
 
-- Vagelis P. – Author & Maintainer  
-- Evan Derventzis – Contributor
+- [Vagelis P.](https://github.com/vagelisp) - Author & Maintainer  
+- [Evan Derventzis](https://github.com/itsnotevann) - Contributor
