@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-	"description": "Notificator Project Public API",
+  "description": "Notificator Project Public API",
+  "author": "Vagelis P. <hello@vagelis.dev>",
+  "contributors": [
+    "Evan Derventzis <evangelos@derventzis.gr>"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },

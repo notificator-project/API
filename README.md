@@ -78,3 +78,8 @@ Recommended pages:
 - API keys must use key type public_client or internal_service.
 - wordpress_server keys are rejected by this endpoint.
 - If key allowed_domains is configured, request Origin or Referer must match.
+
+## Contributors
+
+- Vagelis P. – Author & Maintainer  
+- Evan Derventzis – Contributor
