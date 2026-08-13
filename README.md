@@ -41,6 +41,8 @@ browser bundle.
 
 SDK source and releases are maintained independently in the
 [Node-SDK repository](https://github.com/notificator-project/Node-SDK).
+The current package is
+[`@notificator-project/api@0.1.0`](https://www.npmjs.com/package/@notificator-project/api).
 
 ## What this service does
 
@@ -82,6 +84,9 @@ Required:
 Required for production mobile push delivery:
 
 - EXPO_ACCESS_TOKEN
+
+Push delivery fails closed when this secret is missing. The token is sent only
+to Expo as a bearer authorization header and is never returned by an endpoint.
 
 Required only when email delivery is enabled:
 
