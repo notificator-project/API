@@ -2,6 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
 import mqtt from "mqtt";
+import { Resend } from "resend";
+import {
+  DEFAULT_MQTT_TOPIC_PREFIX,
+  normalizeMqttDeviceId,
+  validateTransientMqttConfig,
+} from "./mqtt-config.mjs";
 
 /**
  * Standard JSON response helper with CORS headers for all supported methods.
@@ -13,7 +19,8 @@ function json(obj, status = 200) {
       "content-type": "application/json",
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "POST, GET, OPTIONS",
-      "access-control-allow-headers": "content-type, authorization, x-api-key, x-wpnotif-key",
+      "access-control-allow-headers":
+        "content-type, authorization, x-api-key, x-wpnotif-key",
     },
   });
 }
@@ -26,7 +33,7 @@ function getOpenApiSpec(serverUrl) {
     openapi: "3.0.3",
     info: {
       title: "Notificator Project Public Notify API",
-      version: "1.0.0",
+      version: "1.1.0",
       description:
         "Public API for ingesting third-party notifications, storing encrypted payloads, and dispatching push and optional MQTT delivery.",
     },
@@ -37,7 +44,11 @@ function getOpenApiSpec(serverUrl) {
           summary: "Send external notification",
           description:
             "Creates and dispatches a third-party notification. The endpoint normalizes common webhook formats, enforces API key policy, and supports push plus optional MQTT fan-out.",
-          security: [{ bearerAuth: [] }, { apiKeyHeader: [] }, { wpnotifKeyHeader: [] }],
+          security: [
+            { bearerAuth: [] },
+            { apiKeyHeader: [] },
+            { wpnotifKeyHeader: [] },
+          ],
           requestBody: {
             required: false,
             description:
@@ -87,7 +98,7 @@ function getOpenApiSpec(serverUrl) {
             },
           },
           responses: {
-            "200": {
+            200: {
               description: "Notification processed",
               content: {
                 "application/json": {
@@ -111,7 +122,8 @@ function getOpenApiSpec(serverUrl) {
                       },
                     },
                     partialSuccess: {
-                      summary: "Stored/push success with MQTT failure (default mode)",
+                      summary:
+                        "Stored/push success with MQTT failure (default mode)",
                       value: {
                         ok: true,
                         kind: "external_notification",
@@ -133,7 +145,7 @@ function getOpenApiSpec(serverUrl) {
                 },
               },
             },
-            "400": {
+            400: {
               description: "Invalid request body or empty payload",
               content: {
                 "application/json": {
@@ -152,8 +164,9 @@ function getOpenApiSpec(serverUrl) {
                 },
               },
             },
-            "401": {
-              description: "Unauthorized (missing/invalid API key or origin restriction)",
+            401: {
+              description:
+                "Unauthorized (missing/invalid API key or origin restriction)",
               content: {
                 "application/json": {
                   schema: { $ref: "#/components/schemas/ErrorResponse" },
@@ -165,16 +178,21 @@ function getOpenApiSpec(serverUrl) {
                       value: { error: "Invalid API key" },
                     },
                     keyType: {
-                      value: { error: "API key type not allowed for this endpoint. Use a public_client or internal_service key." },
+                      value: {
+                        error:
+                          "API key type not allowed for this endpoint. Use a public_client or internal_service key.",
+                      },
                     },
                     domainPolicy: {
-                      value: { error: "Origin is not allowed for this API key" },
+                      value: {
+                        error: "Origin is not allowed for this API key",
+                      },
                     },
                   },
                 },
               },
             },
-            "404": {
+            404: {
               description: "Device not found",
               content: {
                 "application/json": {
@@ -182,7 +200,7 @@ function getOpenApiSpec(serverUrl) {
                 },
               },
             },
-            "409": {
+            409: {
               description: "Target device inactive or paused",
               content: {
                 "application/json": {
@@ -190,7 +208,7 @@ function getOpenApiSpec(serverUrl) {
                 },
               },
             },
-            "502": {
+            502: {
               description: "MQTT publish failure (strictDelivery=true)",
               content: {
                 "application/json": {
@@ -225,9 +243,10 @@ function getOpenApiSpec(serverUrl) {
         },
         get: {
           summary: "Function metadata",
-          description: "Returns endpoint capabilities and usage guidance. Add ?format=openapi to return OpenAPI JSON.",
+          description:
+            "Returns endpoint capabilities and usage guidance. Add ?format=openapi to return OpenAPI JSON.",
           responses: {
-            "200": {
+            200: {
               description: "Metadata response",
               content: {
                 "application/json": {
@@ -267,14 +286,49 @@ function getOpenApiSpec(serverUrl) {
           properties: {
             title: { type: "string" },
             body: { type: "string" },
-            category: { type: "string", enum: ["info", "task", "promo", "information", "tasks", "sale", "sales", "promotion", "promotions"] },
-            severity: { type: "string", enum: ["info", "warning", "error", "critical", "warn", "crit"] },
-            source: { type: "string", description: "Source system identifier; can be used as service fallback." },
+            category: {
+              type: "string",
+              enum: [
+                "info",
+                "task",
+                "promo",
+                "information",
+                "tasks",
+                "sale",
+                "sales",
+                "promotion",
+                "promotions",
+              ],
+            },
+            severity: {
+              type: "string",
+              enum: ["info", "warning", "error", "critical", "warn", "crit"],
+            },
+            source: {
+              type: "string",
+              description:
+                "Source system identifier; can be used as service fallback.",
+            },
             sendPush: { type: "boolean", default: true },
+            sendEmail: {
+              type: "boolean",
+              description:
+                "Overrides the account email-alert preference for this request.",
+            },
             sendMqtt: { type: "boolean", default: true },
-            strictDelivery: { type: "boolean", default: false, description: "When true, MQTT publish failures return 502 instead of partial success." },
+            strictDelivery: {
+              type: "boolean",
+              default: false,
+              description:
+                "When true, MQTT publish failures return 502 instead of partial success.",
+            },
             deviceId: { type: "string" },
             mqttQos: { type: "integer", minimum: 0, maximum: 2 },
+            mqttConnection: {
+              type: "object",
+              properties: { mode: { type: "string", enum: ["custom"] } },
+            },
+            mqttConfig: { $ref: "#/components/schemas/HiveMqCloudConfig" },
             payload: { type: "object", additionalProperties: true },
             data: { type: "object", additionalProperties: true },
           },
@@ -306,6 +360,7 @@ function getOpenApiSpec(serverUrl) {
             pushAttempted: { type: "integer" },
             pushEnabled: { type: "boolean" },
             emailEnabled: { type: "boolean", example: false },
+            emailSent: { type: "boolean" },
             mqttPublishedCount: { type: "integer" },
             mqttFailedCount: { type: "integer" },
             mqttSkipped: { type: "boolean" },
@@ -318,7 +373,19 @@ function getOpenApiSpec(serverUrl) {
             mqttEnabled: { type: "boolean" },
             timestamp: { type: "string", format: "date-time" },
           },
-          required: ["ok", "kind", "stored", "pushSent", "pushAttempted", "pushEnabled", "emailEnabled", "mqttPublishedCount", "mqttSkipped", "mqttEnabled", "timestamp"],
+          required: [
+            "ok",
+            "kind",
+            "stored",
+            "pushSent",
+            "pushAttempted",
+            "pushEnabled",
+            "emailEnabled",
+            "mqttPublishedCount",
+            "mqttSkipped",
+            "mqttEnabled",
+            "timestamp",
+          ],
         },
         ErrorResponse: {
           type: "object",
@@ -326,6 +393,30 @@ function getOpenApiSpec(serverUrl) {
             error: { type: "string" },
           },
           required: ["error"],
+        },
+        HiveMqCloudConfig: {
+          type: "object",
+          description:
+            "Transient HiveMQ Cloud credentials. They are validated for the request and are not persisted.",
+          required: [
+            "version",
+            "provider",
+            "host",
+            "port",
+            "path",
+            "username",
+            "password",
+          ],
+          properties: {
+            version: { type: "integer", enum: [1] },
+            provider: { type: "string", enum: ["hivemq_cloud"] },
+            host: { type: "string", example: "cluster.s1.eu.hivemq.cloud" },
+            port: { type: "integer", enum: [8884] },
+            path: { type: "string", enum: ["/mqtt"] },
+            username: { type: "string" },
+            password: { type: "string", format: "password", writeOnly: true },
+            topicPrefix: { type: "string", default: "notificator-project" },
+          },
         },
       },
     },
@@ -366,6 +457,15 @@ function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function tryParseJsonString(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -400,7 +500,12 @@ function parseWebhookBodyByContentType(raw, contentType) {
   if (!trimmed) return {};
 
   const parsedJson = tryParseJsonString(trimmed);
-  if (parsedJson && (normalizedContentType.includes("json") || trimmed.startsWith("{") || trimmed.startsWith("["))) {
+  if (
+    parsedJson &&
+    (normalizedContentType.includes("json") ||
+      trimmed.startsWith("{") ||
+      trimmed.startsWith("["))
+  ) {
     return parsedJson;
   }
 
@@ -441,10 +546,14 @@ function normalizeWebhookBody(body) {
   }
 
   // Common webhook aliases.
-  if (!normalized.title && typeof normalized.subject === "string") normalized.title = normalized.subject;
-  if (!normalized.body && typeof normalized.description === "string") normalized.body = normalized.description;
-  if (!normalized.body && typeof normalized.text === "string") normalized.body = normalized.text;
-  if (!normalized.source && typeof normalized.service === "string") normalized.source = normalized.service;
+  if (!normalized.title && typeof normalized.subject === "string")
+    normalized.title = normalized.subject;
+  if (!normalized.body && typeof normalized.description === "string")
+    normalized.body = normalized.description;
+  if (!normalized.body && typeof normalized.text === "string")
+    normalized.body = normalized.text;
+  if (!normalized.source && typeof normalized.service === "string")
+    normalized.source = normalized.service;
 
   return normalized;
 }
@@ -459,15 +568,39 @@ async function getSupabaseServiceClient() {
   return createClient(supabaseUrl, supabaseKey);
 }
 
+async function getUserDeliveryPreferences(userId) {
+  const supabase = await getSupabaseServiceClient();
+  if (!supabase) return { emailEnabled: null, email: null };
+
+  const [{ data: profile }, authResult] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("email_notifications")
+      .eq("user_id", userId)
+      .maybeSingle(),
+    supabase.auth?.admin?.getUserById
+      ? supabase.auth.admin.getUserById(userId).catch(() => ({ data: null }))
+      : Promise.resolve({ data: null }),
+  ]);
+
+  return {
+    emailEnabled:
+      typeof profile?.email_notifications === "boolean"
+        ? profile.email_notifications
+        : null,
+    email: authResult?.data?.user?.email || null,
+  };
+}
+
 async function validateDomainWhitelist(supabase, apiKey, origin) {
   if (!origin) return { allowed: true, source: "no_origin" };
-  if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
-    return { allowed: true, source: "localhost" };
-  }
 
   try {
     const url = new URL(origin);
     const requestDomain = url.hostname.replace(/^www\./, "");
+    if (requestDomain === "localhost" || requestDomain === "127.0.0.1") {
+      return { allowed: true, source: "localhost" };
+    }
 
     const { data, error } = await supabase
       .from("api_keys")
@@ -489,13 +622,17 @@ async function validateDomainWhitelist(supabase, apiKey, origin) {
     }
 
     const isAllowed = allowedDomains.some((allowedDomain) => {
-      const normalizedAllowed = String(allowedDomain).toLowerCase().replace(/^www\./, "");
+      const normalizedAllowed = String(allowedDomain)
+        .toLowerCase()
+        .replace(/^www\./, "");
       return normalizedAllowed === requestDomain.toLowerCase();
     });
 
     return {
       allowed: isAllowed,
-      source: isAllowed ? `domain:${requestDomain}` : `unauthorized:${requestDomain}`,
+      source: isAllowed
+        ? `domain:${requestDomain}`
+        : `unauthorized:${requestDomain}`,
     };
   } catch {
     return { allowed: false, source: "domain_parse_error" };
@@ -532,7 +669,11 @@ async function validateApiKey(apiKey, origin = null) {
       return { valid: false, reason: "key_type_not_allowed", keyType };
     }
 
-    const domainValidation = await validateDomainWhitelist(supabase, apiKey, origin);
+    const domainValidation = await validateDomainWhitelist(
+      supabase,
+      apiKey,
+      origin,
+    );
     if (!domainValidation.allowed) {
       return {
         valid: false,
@@ -562,26 +703,39 @@ async function validateApiKey(apiKey, origin = null) {
  */
 async function handleAuthentication(req) {
   const authHeader = req.headers.get("authorization") || "";
-  const apiKeyHeader = req.headers.get("x-api-key") || req.headers.get("x-wpnotif-key") || "";
-  const bearerValue = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : "";
+  const apiKeyHeader =
+    req.headers.get("x-api-key") || req.headers.get("x-wpnotif-key") || "";
+  const bearerValue = authHeader.startsWith("Bearer ")
+    ? authHeader.substring(7).trim()
+    : "";
   const apiKeyCandidate = (bearerValue || apiKeyHeader || "").trim();
 
   if (!apiKeyCandidate) {
-    return { authenticated: false, userId: null, error: "Authorization required" };
+    return {
+      authenticated: false,
+      userId: null,
+      error: "Authorization required",
+    };
   }
 
-  const origin = req.headers.get("origin") || req.headers.get("referer") || null;
+  const origin =
+    req.headers.get("origin") || req.headers.get("referer") || null;
   const validatedKey = await validateApiKey(apiKeyCandidate, origin);
 
   if (!validatedKey?.valid || !validatedKey?.userId) {
     if (validatedKey?.reason === "service_unavailable") {
-      return { authenticated: false, userId: null, error: "Authentication service unavailable" };
+      return {
+        authenticated: false,
+        userId: null,
+        error: "Authentication service unavailable",
+      };
     }
     if (validatedKey?.reason === "key_type_not_allowed") {
       return {
         authenticated: false,
         userId: null,
-        error: "API key type not allowed for this endpoint. Use a public_client or internal_service key.",
+        error:
+          "API key type not allowed for this endpoint. Use a public_client or internal_service key.",
       };
     }
     if (validatedKey?.reason === "domain_not_allowed") {
@@ -654,7 +808,11 @@ async function storeEncryptedNotification(userId, payload) {
     .select();
 
   if (error) {
-    return { stored: false, reason: "db_insert_failed", details: error.message };
+    return {
+      stored: false,
+      reason: "db_insert_failed",
+      details: error.message,
+    };
   }
 
   return { stored: true, id: data?.[0]?.id || null };
@@ -677,7 +835,21 @@ async function getUnreadNotificationCount(userId) {
 /**
  * Sends a single Expo push notification with timeout protection.
  */
-async function sendPushNotification(expoPushToken, title, body, badgeCount = null) {
+async function sendPushNotification(
+  expoPushToken,
+  title,
+  body,
+  badgeCount = null,
+) {
+  const expoTokenPattern =
+    /^(ExpoPushToken|ExponentPushToken)\[[A-Za-z0-9_-]+\]$/;
+  if (
+    typeof expoPushToken !== "string" ||
+    !expoTokenPattern.test(expoPushToken)
+  ) {
+    throw new Error("Invalid Expo push token format");
+  }
+
   const message = {
     to: expoPushToken,
     sound: "default",
@@ -696,20 +868,28 @@ async function sendPushNotification(expoPushToken, title, body, badgeCount = nul
     message.badge = badgeCount;
   }
 
-  const timeoutRaw = Number.parseInt(process.env.EXPO_PUSH_TIMEOUT_MS || "10000", 10);
-  const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 10000;
+  const timeoutRaw = Number.parseInt(
+    process.env.EXPO_PUSH_TIMEOUT_MS || "10000",
+    10,
+  );
+  const timeoutMs =
+    Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 10000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const expoAccessToken = String(process.env.EXPO_ACCESS_TOKEN || "").trim();
+  const headers = {
+    Accept: "application/json",
+    "Accept-Encoding": "gzip, deflate",
+    "Content-Type": "application/json",
+  };
+  if (expoAccessToken) headers.Authorization = `Bearer ${expoAccessToken}`;
 
   let response;
   try {
     response = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Accept-Encoding": "gzip, deflate",
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(message),
       signal: controller.signal,
     });
@@ -724,10 +904,27 @@ async function sendPushNotification(expoPushToken, title, body, badgeCount = nul
 
   if (!response.ok) {
     const errText = await response.text();
+    if (response.status === 403 && !expoAccessToken) {
+      throw new Error(
+        "Expo push security rejected the request; configure EXPO_ACCESS_TOKEN",
+      );
+    }
     throw new Error(`Expo push API returned ${response.status}: ${errText}`);
   }
 
-  return response.json();
+  const result = await response.json();
+  const tickets = Array.isArray(result.data)
+    ? result.data
+    : result.data
+      ? [result.data]
+      : [];
+  const errorTicket = tickets.find((ticket) => ticket?.status === "error");
+  if (errorTicket) {
+    throw new Error(
+      errorTicket.message || "Expo rejected the push notification",
+    );
+  }
+  return result;
 }
 
 /**
@@ -766,15 +963,31 @@ async function getUserDeviceByDeviceId(userId, deviceId) {
   const supabase = await getSupabaseServiceClient();
   if (!supabase) return null;
 
+  const requestedDeviceId = String(deviceId || "").trim();
+  const normalizedDeviceId = normalizeMqttDeviceId(requestedDeviceId);
+  if (!normalizedDeviceId) return null;
+  const candidates = Array.from(
+    new Set([
+      requestedDeviceId,
+      normalizedDeviceId,
+      normalizedDeviceId.toUpperCase(),
+      `WPNOTIF-${normalizedDeviceId}`,
+      `WPNOTIF-${normalizedDeviceId.toUpperCase()}`,
+    ]),
+  );
+
   const { data, error } = await supabase
     .from("devices")
-    .select("id, device_id, is_active, is_paused")
+    .select(
+      "id, device_id, device_type, firmware_version, is_active, is_paused",
+    )
     .eq("user_id", userId)
-    .eq("device_id", deviceId)
-    .single();
+    .in("device_id", candidates);
 
-  if (error) return null;
-  return data || null;
+  if (error || !Array.isArray(data) || data.length === 0) return null;
+  return (
+    data.find((device) => device.device_id === requestedDeviceId) || data[0]
+  );
 }
 
 async function getUserActiveDevices(userId) {
@@ -783,7 +996,7 @@ async function getUserActiveDevices(userId) {
 
   const { data, error } = await supabase
     .from("devices")
-    .select("device_id")
+    .select("device_id, device_type, firmware_version")
     .eq("user_id", userId)
     .eq("is_active", true)
     .eq("is_paused", false);
@@ -792,24 +1005,100 @@ async function getUserActiveDevices(userId) {
   return (data || []).filter((d) => d?.device_id);
 }
 
+const BASE_DEVICE_TYPE = "notificator_base";
+const DEVICE_FIRMWARE_POLICIES = Object.freeze({
+  [BASE_DEVICE_TYPE]: Object.freeze({
+    minimumVersion: "1.2.0",
+    allowUnreportedVersion: false,
+  }),
+  notificator_touch_349: Object.freeze({
+    minimumVersion: "0.0.0-0",
+    allowUnreportedVersion: true,
+  }),
+  notificator_matter: Object.freeze({
+    minimumVersion: "0.0.0-0",
+    allowUnreportedVersion: true,
+  }),
+});
+
+function getDeviceFirmwarePolicy(deviceType) {
+  return (
+    DEVICE_FIRMWARE_POLICIES[
+      String(deviceType || "")
+        .trim()
+        .toLowerCase()
+    ] || DEVICE_FIRMWARE_POLICIES[BASE_DEVICE_TYPE]
+  );
+}
+
+function compareFirmwareVersions(left, right) {
+  const parse = (value) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(
+      String(value || "").trim(),
+    );
+    return match ? match.slice(1, 4).map(Number) : null;
+  };
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  if (!leftParts || !rightParts) return null;
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) {
+      return leftParts[index] < rightParts[index] ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+function isSupportedDeviceFirmware(version, deviceType = BASE_DEVICE_TYPE) {
+  const policy = getDeviceFirmwarePolicy(deviceType);
+  if (!String(version || "").trim()) return policy.allowUnreportedVersion;
+  const comparison = compareFirmwareVersions(version, policy.minimumVersion);
+  return comparison !== null && comparison >= 0;
+}
+
 /**
  * Publishes a normalized notification payload to a device MQTT topic over WSS.
  */
-async function publishMqttNotification({ deviceId, payload, qos = 1, channel = "messages" }) {
-  const host = process.env.HIVEMQ_HOST;
-  const port = parseInt(process.env.HIVEMQ_PORT || "8884", 10);
-  const path = process.env.HIVEMQ_WSS_PATH || "/mqtt";
-  const username = process.env.HIVEMQ_USERNAME;
-  const password = process.env.HIVEMQ_PASSWORD;
-
-  if (!host || !username || !password) {
-    throw new Error("Missing HiveMQ env vars");
+async function publishMqttNotification({
+  deviceId,
+  payload,
+  qos = 1,
+  channel = "messages",
+  mqttConfig = null,
+}) {
+  let connection;
+  if (mqttConfig) {
+    const validation = validateTransientMqttConfig(mqttConfig);
+    if (!validation.ok) throw new Error(validation.error);
+    connection = validation.config;
+  } else {
+    connection = {
+      host: String(process.env.HIVEMQ_HOST || "")
+        .trim()
+        .toLowerCase(),
+      port: parseInt(process.env.HIVEMQ_PORT || "8884", 10),
+      path: process.env.HIVEMQ_WSS_PATH || "/mqtt",
+      username: process.env.HIVEMQ_USERNAME,
+      password: process.env.HIVEMQ_PASSWORD,
+      topicPrefix: String(
+        process.env.HIVEMQ_TOPIC_PREFIX || DEFAULT_MQTT_TOPIC_PREFIX,
+      )
+        .trim()
+        .replace(/^\/+|\/+$/g, ""),
+    };
   }
 
-  const url = `wss://${host}:${port}${path}`;
+  if (!connection.host || !connection.username || !connection.password) {
+    throw new Error("Missing HiveMQ configuration");
+  }
+
+  const plainDeviceId = normalizeMqttDeviceId(deviceId);
+  if (!plainDeviceId) throw new Error("Invalid MQTT device ID");
+
+  const url = `wss://${connection.host}:${connection.port}${connection.path}`;
   const client = mqtt.connect(url, {
-    username,
-    password,
+    username: connection.username,
+    password: connection.password,
     protocol: "wss",
     protocolVersion: 4,
     clean: true,
@@ -818,33 +1107,39 @@ async function publishMqttNotification({ deviceId, payload, qos = 1, channel = "
     rejectUnauthorized: true,
   });
 
-  await new Promise((resolve, reject) => {
-    const onErr = (err) => {
-      client.removeListener("connect", onConn);
-      reject(err);
-    };
-    const onConn = () => {
-      client.removeListener("error", onErr);
-      resolve();
-    };
-    client.once("error", onErr);
-    client.once("connect", onConn);
-  });
-
-  const plainDeviceId = String(deviceId || "").replace("WPNOTIF-", "");
   const safeChannel = channel === "cmd" ? "cmd" : "messages";
-  const topic = `devices/${plainDeviceId}/${safeChannel}`;
+  const topic = `${connection.topicPrefix}/${plainDeviceId}/${safeChannel}`;
   const payloadString = JSON.stringify(payload);
   const mqttQos = [0, 1, 2].includes(qos) ? qos : 1;
 
-  await new Promise((resolve, reject) => {
-    client.publish(topic, payloadString, { qos: mqttQos, retain: false }, (err) => {
-      if (err) return reject(err);
-      resolve();
+  try {
+    await new Promise((resolve, reject) => {
+      const onError = (error) => {
+        client.removeListener("connect", onConnect);
+        reject(error);
+      };
+      const onConnect = () => {
+        client.removeListener("error", onError);
+        resolve();
+      };
+      client.once("error", onError);
+      client.once("connect", onConnect);
     });
-  });
 
-  await new Promise((resolve) => client.end(true, {}, resolve));
+    await new Promise((resolve, reject) => {
+      client.publish(
+        topic,
+        payloadString,
+        { qos: mqttQos, retain: false },
+        (error) => {
+          if (error) reject(error);
+          else resolve();
+        },
+      );
+    });
+  } finally {
+    await new Promise((resolve) => client.end(true, {}, resolve));
+  }
 
   return { topic, qos: mqttQos, retain: false };
 }
@@ -872,13 +1167,16 @@ function buildExternalNotificationPayload(inputBody) {
     "uid",
     "deviceUid",
     "sendPush",
+    "sendEmail",
     "sendMqtt",
     "strictDelivery",
     "mqttQos",
+    "mqttConnection",
+    "mqttConfig",
   ]);
 
   const extraTopLevel = Object.fromEntries(
-    Object.entries(body).filter(([key]) => !reservedKeys.has(key))
+    Object.entries(body).filter(([key]) => !reservedKeys.has(key)),
   );
 
   const payloadObject = isPlainObject(body.payload) ? body.payload : null;
@@ -1039,12 +1337,26 @@ function buildExternalNotificationPayload(inputBody) {
 
   const fallbackBody = "";
 
-  const source = pickFirstNonEmptyString([body.source, body.payload?.source, body.data?.source, "third_party"]).slice(0, 200);
+  const source = pickFirstNonEmptyString([
+    body.source,
+    body.payload?.source,
+    body.data?.source,
+    "third_party",
+  ]).slice(0, 200);
   const category = normalizeCategory(
-    pickFirstNonEmptyString([body.category, body.payload?.category, body.data?.category, "general"])
+    pickFirstNonEmptyString([
+      body.category,
+      body.payload?.category,
+      body.data?.category,
+      "general",
+    ]),
   );
   const severity = normalizeSeverity(
-    pickFirstNonEmptyString([body.severity, body.payload?.severity, body.data?.severity])
+    pickFirstNonEmptyString([
+      body.severity,
+      body.payload?.severity,
+      body.data?.severity,
+    ]),
   );
 
   if (!mergedData.category) {
@@ -1055,9 +1367,10 @@ function buildExternalNotificationPayload(inputBody) {
   }
 
   const timestampCandidate = (body.timestamp || "").toString().trim();
-  const timestamp = timestampCandidate && !Number.isNaN(Date.parse(timestampCandidate))
-    ? new Date(timestampCandidate).toISOString()
-    : new Date().toISOString();
+  const timestamp =
+    timestampCandidate && !Number.isNaN(Date.parse(timestampCandidate))
+      ? new Date(timestampCandidate).toISOString()
+      : new Date().toISOString();
 
   return {
     title,
@@ -1127,9 +1440,28 @@ function hasMeaningfulExternalPayload(body = {}) {
 async function handleExternalNotification(userId, bodyJson) {
   const payload = buildExternalNotificationPayload(bodyJson);
 
-  const requestSendPush = typeof bodyJson?.sendPush === "boolean" ? bodyJson.sendPush : true;
-  const requestSendMqtt = typeof bodyJson?.sendMqtt === "boolean" ? bodyJson.sendMqtt : true;
+  const requestSendPush =
+    typeof bodyJson?.sendPush === "boolean" ? bodyJson.sendPush : true;
+  const requestSendMqtt =
+    typeof bodyJson?.sendMqtt === "boolean" ? bodyJson.sendMqtt : true;
+  const requestSendEmail =
+    typeof bodyJson?.sendEmail === "boolean" ? bodyJson.sendEmail : null;
+  const preferences =
+    requestSendEmail === false
+      ? { emailEnabled: null, email: null }
+      : await getUserDeliveryPreferences(userId);
+  const effectiveSendEmail =
+    requestSendEmail ?? preferences.emailEnabled ?? false;
   const strictDelivery = bodyJson?.strictDelivery === true;
+  const customMqttRequested =
+    bodyJson?.mqttConnection?.mode === "custom" ||
+    Object.prototype.hasOwnProperty.call(bodyJson || {}, "mqttConfig");
+  let transientMqttConfig = null;
+  if (requestSendMqtt && customMqttRequested) {
+    const mqttValidation = validateTransientMqttConfig(bodyJson?.mqttConfig);
+    if (!mqttValidation.ok) return json({ error: mqttValidation.error }, 400);
+    transientMqttConfig = mqttValidation.config;
+  }
 
   const stored = await storeEncryptedNotification(userId, payload);
 
@@ -1164,13 +1496,36 @@ async function handleExternalNotification(userId, bodyJson) {
       if (device.is_active === false || device.is_paused === true) {
         return json({ error: "Device is inactive or paused" }, 409);
       }
-      targetDeviceIds = [device.device_id];
+      if (
+        !isSupportedDeviceFirmware(device.firmware_version, device.device_type)
+      ) {
+        const policy = getDeviceFirmwarePolicy(device.device_type);
+        mqttResult = {
+          skipped: true,
+          reason: "firmware_upgrade_required",
+          deviceId: device.device_id,
+          deviceType: device.device_type || BASE_DEVICE_TYPE,
+          firmwareVersion: device.firmware_version || null,
+          minimumFirmwareVersion: policy.minimumVersion,
+        };
+      } else {
+        targetDeviceIds = [device.device_id];
+      }
     } else {
       const devices = await getUserActiveDevices(userId);
       if (devices.length === 0) {
         mqttResult = { skipped: true, reason: "no_active_devices" };
       } else {
-        targetDeviceIds = devices.map((d) => d.device_id);
+        const eligibleDevices = devices.filter((device) =>
+          isSupportedDeviceFirmware(
+            device.firmware_version,
+            device.device_type,
+          ),
+        );
+        targetDeviceIds = eligibleDevices.map((device) => device.device_id);
+        if (targetDeviceIds.length === 0) {
+          mqttResult = { skipped: true, reason: "firmware_upgrade_required" };
+        }
       }
     }
 
@@ -1180,6 +1535,7 @@ async function handleExternalNotification(userId, bodyJson) {
           deviceId: targetDeviceId,
           payload,
           qos: mqttQos,
+          mqttConfig: transientMqttConfig,
         });
 
         if (!Array.isArray(mqttResult)) mqttResult = [];
@@ -1190,7 +1546,11 @@ async function handleExternalNotification(userId, bodyJson) {
         if (!mqttError) mqttError = details;
 
         if (!Array.isArray(mqttResult)) mqttResult = [];
-        mqttResult.push({ deviceId: targetDeviceId, ok: false, error: details });
+        mqttResult.push({
+          deviceId: targetDeviceId,
+          ok: false,
+          error: details,
+        });
 
         if (strictDelivery) {
           return json(
@@ -1203,7 +1563,7 @@ async function handleExternalNotification(userId, bodyJson) {
               pushSent: pushResult.pushSent,
               pushAttempted: pushResult.attempted,
             },
-            502
+            502,
           );
         }
       }
@@ -1214,11 +1574,38 @@ async function handleExternalNotification(userId, bodyJson) {
     warnings.push("mqtt_publish_failed_partial");
   }
 
+  let emailSent = false;
+  let emailId = null;
+  if (effectiveSendEmail) {
+    if (!process.env.RESEND_API_KEY || !process.env.ALERT_EMAIL_FROM) {
+      warnings.push("email_not_configured");
+    } else if (!preferences.email) {
+      warnings.push("email_recipient_unavailable");
+    } else {
+      try {
+        const resend = new Resend(process.env.RESEND_API_KEY);
+        const response = await resend.emails.send({
+          from: process.env.ALERT_EMAIL_FROM,
+          to: preferences.email,
+          subject: payload.title,
+          text: `${payload.title}\n\n${payload.body}\n\nSource: ${payload.source}`,
+          html: `<h2>${escapeHtml(payload.title)}</h2><p>${escapeHtml(payload.body)}</p><p><small>Source: ${escapeHtml(payload.source)}</small></p>`,
+        });
+        emailSent = true;
+        emailId = response?.data?.id || null;
+      } catch {
+        warnings.push("email_delivery_failed");
+      }
+    }
+  }
+
   return json({
     ok: true,
     kind: "external_notification",
     stored: stored?.stored === true,
-    ...(stored?.stored !== true && stored?.reason ? { storeReason: stored.reason } : {}),
+    ...(stored?.stored !== true && stored?.reason
+      ? { storeReason: stored.reason }
+      : {}),
     payloadPreview: {
       type: payload.type,
       title: payload.title,
@@ -1231,16 +1618,21 @@ async function handleExternalNotification(userId, bodyJson) {
     pushSent: pushResult.pushSent,
     pushAttempted: pushResult.attempted,
     pushEnabled: requestSendPush,
-    emailEnabled: false,
+    emailEnabled: effectiveSendEmail,
+    emailSent,
+    ...(emailId ? { emailId } : {}),
     mqttPublishedCount: Array.isArray(mqttResult)
       ? mqttResult.filter((entry) => entry?.ok !== false).length
       : 0,
     mqttFailedCount,
     mqttSkipped: mqttResult?.skipped === true,
-    ...(mqttResult?.skipped === true ? { mqttSkipReason: mqttResult.reason || "unknown" } : {}),
+    ...(mqttResult?.skipped === true
+      ? { mqttSkipReason: mqttResult.reason || "unknown" }
+      : {}),
     ...(mqttError ? { mqttError } : {}),
     ...(warnings.length ? { warnings } : {}),
     mqttEnabled: requestSendMqtt,
+    mqttConnectionMode: transientMqttConfig ? "custom" : "environment",
     timestamp: new Date().toISOString(),
   });
 }
@@ -1265,7 +1657,10 @@ export default async (req) => {
     }
 
     const format = (requestUrl?.searchParams.get("format") || "").toLowerCase();
-    const wantsOpenApi = format === "openapi" || format === "swagger" || requestUrl?.searchParams.get("openapi") === "1";
+    const wantsOpenApi =
+      format === "openapi" ||
+      format === "swagger" ||
+      requestUrl?.searchParams.get("openapi") === "1";
 
     if (wantsOpenApi) {
       const serverUrl = requestUrl
@@ -1281,17 +1676,27 @@ export default async (req) => {
         endpoint: "https://api.notificator-project.com",
         methods: ["POST", "GET", "OPTIONS"],
         auth: {
-          headers: ["Authorization: Bearer wpnotif_...", "x-api-key: wpnotif_...", "x-wpnotif-key: wpnotif_..."],
+          headers: [
+            "Authorization: Bearer wpnotif_...",
+            "x-api-key: wpnotif_...",
+            "x-wpnotif-key: wpnotif_...",
+          ],
           allowedKeyTypes: ["public_client", "internal_service"],
-          rejectedKeyTypes: ["wordpress_server"],
+          rejectedKeyTypes: ["wordpress_server", "strapi_server"],
         },
-        acceptedContentTypes: ["application/json", "application/x-www-form-urlencoded", "text/plain"],
+        acceptedContentTypes: [
+          "application/json",
+          "application/x-www-form-urlencoded",
+          "text/plain",
+        ],
         payloadRules: {
-          minimum: "At least one meaningful field is required (title/body/message/category/severity/payload/data).",
+          minimum:
+            "At least one meaningful field is required (title/body/message/category/severity/payload/data).",
           emptyPayloadStatus: 400,
         },
         deliveryDefaults: {
           sendPush: true,
+          sendEmail: "account preference",
           sendMqtt: true,
           strictDelivery: false,
         },
@@ -1301,19 +1706,24 @@ export default async (req) => {
         },
         openapi: `${requestUrl?.origin || "https://api.notificator-project.com"}?format=openapi`,
       },
-      200
+      200,
     );
   }
 
   if (req.method !== "POST") {
-    return json({ error: "Method not allowed", allowed: ["GET", "POST", "OPTIONS"] }, 405);
+    return json(
+      { error: "Method not allowed", allowed: ["GET", "POST", "OPTIONS"] },
+      405,
+    );
   }
 
   let bodyJson = {};
   try {
     const raw = await req.text();
     const contentType = req.headers.get("content-type") || "";
-    bodyJson = normalizeWebhookBody(parseWebhookBodyByContentType(raw, contentType));
+    bodyJson = normalizeWebhookBody(
+      parseWebhookBodyByContentType(raw, contentType),
+    );
   } catch {
     return json({ error: "Invalid request body" }, 400);
   }
@@ -1324,7 +1734,7 @@ export default async (req) => {
         error: "Request payload is empty",
         hint: "Provide at least one meaningful field such as title, body, message, category, severity, payload, or data.",
       },
-      400
+      400,
     );
   }
 

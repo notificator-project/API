@@ -6,3 +6,12 @@ node_modules/
 
 # Ignore build output
 dist/
+
+# Local deployment state and secrets
+.netlify/
+.env
+.env.*
+!.env.example
+
+# Local package verification artifacts
+*.tgz

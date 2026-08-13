@@ -1,8 +1,50 @@
 # Notificator Project Public API
 
-This repository contains the Notificator Project Public Notify API.
+This repository contains the hosted Notificator Public Notify API, a deployable
+self-hosted service, and the official Node.js client.
 
-It is intended for teams that want to deploy the public notification ingestion endpoint independently.
+Most integrations should use the hosted endpoint. Teams that need control over
+the runtime can deploy the same service against a compatible Notificator data
+plane and point the Node.js client at their own URL.
+
+## Choose how to use it
+
+### Hosted API
+
+Send requests to `https://api.notificator-project.com`. You only need a
+`public_client` API key created in the Notificator mobile app. Notificator runs
+and maintains the API service.
+
+### Node.js package
+
+```bash
+npm install @notificator-project/api
+```
+
+```js
+import { NotificatorClient } from "@notificator-project/api";
+
+const notificator = new NotificatorClient({
+  apiKey: process.env.NOTIFICATOR_API_KEY,
+});
+
+await notificator.notify({
+  title: "Deployment complete",
+  body: "Version 2.4.1 is live.",
+  source: "deploy-worker",
+  severity: "info",
+});
+```
+
+Keep API keys in server-side environment variables. Do not ship them in a
+browser bundle.
+
+### Self-hosted API
+
+This repository remains deployable on Netlify. A fully independent deployment
+needs its own compatible Supabase schema, service-role credentials, push
+configuration, and optional email/MQTT providers. Self-hosting the function
+does not make the official Notificator service-role key available.
 
 ## What this service does
 
@@ -11,7 +53,10 @@ It is intended for teams that want to deploy the public notification ingestion e
 - Normalizes payloads from common webhook formats.
 - Stores encrypted notifications in Supabase.
 - Sends push notifications to user devices.
-- Publishes MQTT messages to active devices (optional).
+- Sends account-controlled email alerts when configured.
+- Publishes MQTT messages to eligible active devices (optional).
+- Accepts validated, request-scoped HiveMQ Cloud credentials without storing
+  them.
 
 ## Endpoint behavior summary
 
@@ -38,6 +83,15 @@ Required:
 - SUPABASE_URL
 - SUPABASE_SERVICE_ROLE_KEY
 
+Required for Expo projects with push security enabled:
+
+- EXPO_ACCESS_TOKEN
+
+Required only when email delivery is enabled:
+
+- RESEND_API_KEY
+- ALERT_EMAIL_FROM
+
 Required only when MQTT is enabled:
 
 - HIVEMQ_HOST
@@ -48,18 +102,40 @@ Optional:
 
 - HIVEMQ_PORT (default: 8884)
 - HIVEMQ_WSS_PATH (default: /mqtt)
+- HIVEMQ_TOPIC_PREFIX (default: notificator-project)
 - EXPO_PUSH_TIMEOUT_MS (default: 10000)
 
 ## Local development
 
-1. Install dependencies: npm install
-2. Start locally: npm run dev
+1. Install dependencies: `npm install`
+2. Copy `.env.example` to `.env` and add your own credentials. Local env files
+   are ignored by Git.
+3. Start locally: `npm run dev`
+4. Run checks: `npm test`
 
 ## Deploy
 
 Deploy to Netlify production:
 
 npm run deploy
+
+Do not deploy until the Supabase service role belongs to the data plane that
+the deployment is intended to serve.
+
+## Publish the Node.js package
+
+The package lives in `packages/api`. Its release workflow uses npm trusted
+publishing and provenance. Configure the npm package to trust
+`.github/workflows/release-npm.yml`, update the package version, and push a tag
+such as `sdk-v0.1.0`.
+
+Run this before publishing:
+
+```bash
+npm run format:check
+npm test
+npm run pack:sdk
+```
 
 ## Documentation
 
@@ -76,10 +152,14 @@ Recommended pages:
 ## Notes
 
 - API keys must use key type public_client or internal_service.
-- wordpress_server keys are rejected by this endpoint.
+- `wordpress_server` and `strapi_server` keys are rejected by this endpoint.
 - If key allowed_domains is configured, request Origin or Referer must match.
+- The default MQTT topic is
+  `notificator-project/{deviceId}/messages`.
+- Base devices must report supported firmware before MQTT delivery; newer
+  device families use their own firmware policy.
 
 ## Contributors
 
-- [Vagelis P.](https://github.com/vagelisp) - Author & Maintainer  
+- [Vagelis P.](https://github.com/vagelisp) - Author & Maintainer
 - [Evan Derventzis](https://github.com/itsnotevann) - Contributor
