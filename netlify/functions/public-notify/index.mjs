@@ -833,6 +833,29 @@ async function getUnreadNotificationCount(userId) {
 }
 
 /**
+ * Builds the authenticated headers required by Expo enhanced push security.
+ *
+ * The access token is a deployment secret associated with the official EAS
+ * project. Push delivery must fail closed when it is missing so requests never
+ * fall back to unauthenticated Expo delivery.
+ */
+export function buildExpoPushHeaders(accessTokenValue) {
+  const accessToken = String(accessTokenValue || "").trim();
+  if (!accessToken) {
+    throw new Error(
+      "Expo push delivery is unavailable: EXPO_ACCESS_TOKEN is not configured",
+    );
+  }
+
+  return {
+    Accept: "application/json",
+    "Accept-Encoding": "gzip, deflate",
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${accessToken}`,
+  };
+}
+
+/**
  * Sends a single Expo push notification with timeout protection.
  */
 async function sendPushNotification(
@@ -877,13 +900,7 @@ async function sendPushNotification(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  const expoAccessToken = String(process.env.EXPO_ACCESS_TOKEN || "").trim();
-  const headers = {
-    Accept: "application/json",
-    "Accept-Encoding": "gzip, deflate",
-    "Content-Type": "application/json",
-  };
-  if (expoAccessToken) headers.Authorization = `Bearer ${expoAccessToken}`;
+  const headers = buildExpoPushHeaders(process.env.EXPO_ACCESS_TOKEN);
 
   let response;
   try {
@@ -904,11 +921,6 @@ async function sendPushNotification(
 
   if (!response.ok) {
     const errText = await response.text();
-    if (response.status === 403 && !expoAccessToken) {
-      throw new Error(
-        "Expo push security rejected the request; configure EXPO_ACCESS_TOKEN",
-      );
-    }
     throw new Error(`Expo push API returned ${response.status}: ${errText}`);
   }
 

@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import handler from "../netlify/functions/public-notify/index.mjs";
+import handler, {
+  buildExpoPushHeaders,
+} from "../netlify/functions/public-notify/index.mjs";
+
+test("authenticates Expo push requests with the deployment token", () => {
+  const headers = buildExpoPushHeaders("expo_test_access_token");
+
+  assert.equal(headers.Authorization, "Bearer expo_test_access_token");
+  assert.equal(headers["Content-Type"], "application/json");
+});
+
+test("fails closed when the Expo access token is missing", () => {
+  assert.throws(
+    () => buildExpoPushHeaders("  "),
+    /EXPO_ACCESS_TOKEN is not configured/,
+  );
+});
 
 test("returns public endpoint metadata", async () => {
   const response = await handler(
