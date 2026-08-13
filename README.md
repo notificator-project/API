@@ -1,21 +1,21 @@
-# Notificator Project Public API
+# Notificator Hosted API
 
-This repository contains the hosted Notificator Public Notify API, a deployable
-self-hosted service, and the official Node.js client.
+This repository contains the backend deployed at
+`https://api.notificator-project.com`. It validates integration requests and
+coordinates delivery to the Notificator inbox, mobile push notifications,
+email, and connected MQTT devices.
 
-Most integrations should use the hosted endpoint. Teams that need control over
-the runtime can deploy the same service against a compatible Notificator data
-plane and point the Node.js client at their own URL.
+The service is operated by the Notificator Project because official mobile push
+delivery depends on protected credentials associated with the Notificator app.
+Those credentials are never distributed to integrations or npm packages.
 
-## Choose how to use it
+## Integrate with Notificator
 
-### Hosted API
-
-Send requests to `https://api.notificator-project.com`. You only need a
+Send requests to `https://api.notificator-project.com`. Integrations need a
 `public_client` API key created in the Notificator mobile app. Notificator runs
 and maintains the API service.
 
-### Node.js package
+Node.js applications can use the separate official SDK:
 
 ```bash
 npm install @notificator-project/api
@@ -39,12 +39,8 @@ await notificator.notify({
 Keep API keys in server-side environment variables. Do not ship them in a
 browser bundle.
 
-### Self-hosted API
-
-This repository remains deployable on Netlify. A fully independent deployment
-needs its own compatible Supabase schema, service-role credentials, push
-configuration, and optional email/MQTT providers. Self-hosting the function
-does not make the official Notificator service-role key available.
+SDK source and releases are maintained independently in the
+[Node-SDK repository](https://github.com/notificator-project/Node-SDK).
 
 ## What this service does
 
@@ -83,7 +79,7 @@ Required:
 - SUPABASE_URL
 - SUPABASE_SERVICE_ROLE_KEY
 
-Required for Expo projects with push security enabled:
+Required for production mobile push delivery:
 
 - EXPO_ACCESS_TOKEN
 
@@ -105,37 +101,23 @@ Optional:
 - HIVEMQ_TOPIC_PREFIX (default: notificator-project)
 - EXPO_PUSH_TIMEOUT_MS (default: 10000)
 
-## Local development
+## Maintainer development
 
 1. Install dependencies: `npm install`
-2. Copy `.env.example` to `.env` and add your own credentials. Local env files
-   are ignored by Git.
+2. Copy `.env.example` to `.env` and add authorized development credentials.
+   Local env files are ignored by Git.
 3. Start locally: `npm run dev`
 4. Run checks: `npm test`
 
-## Deploy
+## Deployment
 
-Deploy to Netlify production:
+Production deployment is restricted to project maintainers:
 
 npm run deploy
 
-Do not deploy until the Supabase service role belongs to the data plane that
-the deployment is intended to serve.
-
-## Publish the Node.js package
-
-The package lives in `packages/api`. Its release workflow uses npm trusted
-publishing and provenance. Configure the npm package to trust
-`.github/workflows/release-npm.yml`, update the package version, and push a tag
-such as `sdk-v0.1.0`.
-
-Run this before publishing:
-
-```bash
-npm run format:check
-npm test
-npm run pack:sdk
-```
+The Netlify project must provide every required runtime secret. In particular,
+`EXPO_ACCESS_TOKEN` must remain a secret scoped to server-side functions and
+must never be exposed during a frontend build or returned by an endpoint.
 
 ## Documentation
 

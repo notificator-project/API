@@ -14,15 +14,10 @@
   "scripts": {
     "dev": "netlify dev",
     "deploy": "netlify deploy --prod",
-    "format": "prettier --write \"{netlify,packages,test}/**/*.{js,mjs,ts,json,md}\" \"*.{json,md}\"",
-    "format:check": "prettier --check \"{netlify,packages,test}/**/*.{js,mjs,ts,json,md}\" \"*.{json,md}\"",
-    "test": "node --test",
-    "test:sdk": "npm test --workspace @notificator-project/api",
-    "pack:sdk": "npm pack --workspace @notificator-project/api --dry-run"
+    "format": "prettier --write \"{netlify,test}/**/*.{js,mjs,ts,json,md}\" \"*.{json,md}\"",
+    "format:check": "prettier --check \"{netlify,test}/**/*.{js,mjs,ts,json,md}\" \"*.{json,md}\"",
+    "test": "node --test"
   },
-  "workspaces": [
-    "packages/*"
-  ],
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
     "mqtt": "^5.10.3",
