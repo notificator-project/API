@@ -12,7 +12,7 @@ Those credentials are never distributed to integrations or npm packages.
 ## Integrate with Notificator
 
 Send requests to `https://api.notificator-project.com`. Integrations need a
-`public_client` API key created in the Notificator mobile app. Notificator runs
+`public_client` API key created in the [web dashboard (beta)](https://dashboard.notificator-project.com) or Notificator mobile app. Notificator runs
 and maintains the API service.
 
 Node.js applications can use the separate official SDK:
